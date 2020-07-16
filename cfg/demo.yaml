@@ -1,12 +1,20 @@
 
 # Demo config CoG file
 
+### Configuration
+
+min_cog_nodes = 1
+max_cog_nodes = 10
+
+### Data files
+
 path_data: '../data'  # Path reletive to script
 
 # File for demand info
-file_demand:
+file_demand: '2010-pop-by-zcta.csv'
 
 # File indicating supply sources
+flag_supply: False
+
 file_supply:
 
-flag_supply: False
