@@ -1,0 +1,12 @@
+
+# Demo config CoG file
+
+path_data: '../data'  # Path reletive to script
+
+# File for demand info
+file_demand:
+
+# File indicating supply sources
+file_supply:
+
+flag_supply: False
