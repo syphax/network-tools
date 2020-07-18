@@ -1,19 +1,29 @@
 
 # Demo config CoG file
 
-### Configuration
+# This config file contains all currently supported parameters
+# It serves as documentation of available parameters
 
-min_cog_nodes = 1
-max_cog_nodes = 10
+### Node range
+
+# The CoG script will solve for nodes = min_cog_nodes to max_cog_nodes, inclusive
+
+min_cog_nodes: 1
+max_cog_nodes: 10
 
 ### Data files
 
-path_data: '../data'  # Path reletive to script
+# If this key is not included, the script will use a default path ('../data/')
+path_data: '../data'  # Path relative to script
 
 # File for demand info
+# Requires comma-delimited data
 file_demand: '2010-pop-by-zcta.csv'
 
 # File indicating supply sources
+# If this flag is False, the script will not attempt to load supply-side data,
+# or include supply-side
+
 flag_supply: False
 
 file_supply:
