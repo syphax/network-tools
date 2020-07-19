@@ -21,10 +21,9 @@ path_data: '../data'  # Path relative to script
 file_demand: '2010-pop-by-zcta.csv'
 
 # File indicating supply sources
-# If this flag is False, the script will not attempt to load supply-side data,
+# If this flag is False or missing, the script will not attempt to load supply-side data,
 # or include supply-side
 
 flag_supply: False
 
-file_supply:
 
