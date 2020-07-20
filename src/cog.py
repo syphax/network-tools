@@ -42,8 +42,10 @@ class CenterOfGravity:
         self.x_fld = x_fld
         self.y_fld = y_fld
 
-        self.distance_mode = distance_mode
+        self.bbox_demand = {}
+        self.bbox_supply = {}
 
+        self.distance_mode = distance_mode
 
     def calc_bounding_box(self, df):
         # Convenience
@@ -53,11 +55,21 @@ class CenterOfGravity:
         min_x = df[colx].min()
         min_y = df[coly].min()
         max_x = df[colx].max()
-        may_y = df[coly].max()
+        max_y = df[coly].max()
         diff_x = max_x - min_x
         diff_y = max_y - min_y
 
-        return [min_x, max_x, min_y, max_y, diff_x, diff_y]
+        bbox = {'min_x': min_x, 'max_x': max_x, 'min_y': min_y, 'max_y': max_y, 'diff_x': diff_x, 'diff_y': diff_y}
+
+        return bbox
+
+    def calc_bounding_box_demand(self):
+        bbox = self.calc_bounding_box(self.df_cog_demand_data)
+        self.bbox_demand = bbox
+
+    def calc_bounding_box_supply(self):
+        bbox = self.calc_bounding_box(self.df_cog_supply_data)
+        self.bbox_supply = bbox
 
     def init_cog(self, n=1):
         print(n)
