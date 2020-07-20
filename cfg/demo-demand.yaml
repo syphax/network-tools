@@ -20,10 +20,18 @@ path_data: '../data'  # Path relative to script
 # Requires comma-delimited data
 file_demand: '2010-pop-by-zcta.csv'
 
+# Relative cost of distance to demand
+demand_cost: 1.0
+
 # File indicating supply sources
 # If this flag is False or missing, the script will not attempt to load supply-side data,
 # or include supply-side
 
 flag_supply: False
 
+# OPTIONAL list of files to use to match geo IDs in the supply and demand data to lat/lng coordinates
+# The resolution of these files must match the supply and demand files
+# Note that it's OK to mix resolutions (e.g. ZIP3 and ZIP5, or FSA and full Canadian postal codes)
 
+path_geo: '../data/geo'
+files_geo: ['US-ZIP5.csv', 'CA-FSA.csv']
