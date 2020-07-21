@@ -3,6 +3,8 @@ import os
 import sys
 import yaml
 import pandas as pd
+import numpy as np
+
 import folium
 
 
@@ -21,14 +23,25 @@ class CenterOfGravity:
 
     def __init__(self, params, df_demand_data, df_supply_data=None,
                  dmd_fld='demand', supply_fld='supply', supply_grp_fld='supply_group',
-                 x_fld='lng', y_fld='lat', distance_mode='haversine'):
+                 x_fld='lng', y_fld='lat', units='degrees', distance_units='mi', distance_mode='haversine'):
         """
 
         Sets initial values for parameters and input datq
 
+        Note: If units are degrees or radians,
+        init sets up x, y fields with hard-coded names that contain x, y in radians: lat_rad and lng_rad
+
         :param params: Dict of parameter values
         :param df_demand_data: DataFrame of demand data, with lat/lng fields
         :param df_supply_data: DataFrame of supply data, with lat/lng fields; optional
+        :param dmd_fld:
+        :param supply_fld:
+        :param supply_grp_fld:
+        :param x_fld:
+        :param y_fld:
+        :param units: Coordinate unit of measure. Can be: mi, km, m, radians, degrees. Latter 2 are latitude/longitude
+        :param distance_units: Units used for distance. Doesn't have to match units
+        :param distance_mode: haversine or linear
 
         """
 
@@ -36,21 +49,34 @@ class CenterOfGravity:
         self.df_cog_demand_data = df_demand_data
         self.df_cog_supply_data = df_supply_data
 
-        self.fld_dmd = dmd_fld
-        self.fld_supply = supply_fld
-        self.fld_supply_grp = supply_grp_fld
-        self.x_fld = x_fld
-        self.y_fld = y_fld
+        self.flds = dict()
+        self.flds['dmd'] = dmd_fld
+        self.flds['supply'] = supply_fld
+        self.flds['supply_grp'] = supply_grp_fld
+        self.flds['x'] = x_fld
+        self.flds['y'] = y_fld
 
-        self.bbox_demand = {}
-        self.bbox_supply = {}
+        self.bbox_demand = dict()
+        self.calc_bounding_box_demand()
+        self.bbox_supply = dict()
+        self.calc_bounding_box_supply()
 
+        self.units = units
+        self.distance_units = distance_units
         self.distance_mode = distance_mode
+
+        # Convert coordinates if necessary:
+
+        self.earth_radius = 0
+        if units in ['degrees', 'radians']:
+            self.compute_radians_demand(units)
+            self.compute_radians_supply(units)
+            self.set_earth_radius(distance_units)
 
     def calc_bounding_box(self, df):
         # Convenience
-        colx = self.x_fld
-        coly = self.y_fld
+        colx = self.flds['x']
+        coly = self.flds['y']
 
         min_x = df[colx].min()
         min_y = df[coly].min()
@@ -68,11 +94,105 @@ class CenterOfGravity:
         self.bbox_demand = bbox
 
     def calc_bounding_box_supply(self):
-        bbox = self.calc_bounding_box(self.df_cog_supply_data)
-        self.bbox_supply = bbox
+        if self.cog_params['flag_supply']:
+            bbox = self.calc_bounding_box(self.df_cog_supply_data)
+            self.bbox_supply = bbox
+        else:
+            self.bbox_supply = None
 
-    def init_cog(self, n=1):
-        print(n)
+    def compute_radians(self, df, units):
+        if units == 'degrees':
+            df['lat_rad'] = np.radians(df[self.flds['y']])
+            df['lng_rad'] = np.radians(df[self.flds['x']])
+        elif units == 'radians':
+            # No conversion necessary
+            df['lat_rad'] = df[self.flds['y']]
+            df['lng_rad'] = df[self.flds['x']]
+        else:
+            df['lat_rad'] = np.nan()
+            df['lng_rad'] = np.nan()
+
+        return df
+
+    def compute_radians_demand(self, units):
+        self.df_cog_demand_data = self.compute_radians(self.df_cog_demand_data, units)
+
+    def compute_radians_supply(self, units):
+        if not self.df_cog_supply_data is None:
+            self.df_cog_supply_data = self.compute_radians(self.df_cog_supply_data, units)
+
+    def set_earth_radius(self, units):
+        if units == 'mi':
+            self.earth_radius = 3959.87
+        elif units == 'km':
+            self.earth_radius = 6372.8
+        elif units == 'm':
+            self.earth_radius = 6372800
+
+    def init_cog(self, n=1, method='circles_1'):
+        """
+
+        Initializes CoG run with initial CoGs
+
+        Methods include:
+        - circles_1: Pick a spot, draw an exclusivity circle, pick the next spot, repeat
+
+        :param n: Number of centers of gravity
+        :param method: Method to use to initialize
+        :return:
+        """
+
+        # For simplicity we don't worry about whether x, y coordinates are linear or angular for initialization
+
+        if method == 'circles_1':
+            for i in range(1,n+1):
+                print(i)
+
+    def get_df_distances(self, df_o, df_d, mode='haversine'):
+        """
+
+        Compute distances between each combination in 2 sets of coordinates
+
+        Assumes each DataFrame has x, y coordinates as indicated by flds['x'] and flds['y']
+
+        :param df_o:
+        :param df_d:
+        :param mode:
+        :param units: mi, km, or m
+        :return:
+        """
+
+        df_o['cartesianjoinkey'] = 0
+        df_d['cartesianjoinkey'] = 0
+
+        df_join = df_o.merge(df_d, on='cartesianjoinkey', how='outer', suffixes=['_o', '_d'])
+        # We keep the key column for speed; otherwise we could drop it for hygiene
+
+        col_x_o = self.flds['x'] + '_o'
+        col_y_o = self.flds['y'] + '_o'
+        col_x_d = self.flds['x'] + '_d'
+        col_y_d = self.flds['y'] + '_d'
+
+        if mode == 'linear':
+            # Unit-invariant
+            df_join['distance'] = np.sqrt(np.power(df_join[col_x_o] - df_join[col_x_d], 2) +
+                                          np.power(df_join[col_y_o] - df_join[col_y_d], 2))
+
+        elif mode == 'haversine':
+            dlon = df_join['lon_rad_d'] - df_join['lon_rad_o']
+            dlat = df_join['lat_rad_d'] - df_join['lat_rad_o']
+            a = (np.power(np.sin(dlat/2.0), 2) + np.cos(df_join['lat_rad_o'])
+                 * np.cos(df_join['lat_rad_d']) * np.power(np.sin(dlon/2.0)), 2)
+            c = 2.0 * np.arcsin(np.sqrt(a))
+            df_join['distance'] = self.earth_radius * c
+
+    # TESTS
+
+    def test_dmd_bbox(self):
+        return self.bbox_demand
+
+    def test_supply_bbox(self):
+        return self.bbox_supply
 
     def test_dmd_rows(self):
         return self.df_cog_demand_data.shape[0]
@@ -349,6 +469,9 @@ if __name__ == "__main__":
 
     print('Valid demand rows: {}'.format(cog.test_dmd_rows()))
     print('Valid demand pct: {}'.format(cog.test_dmd_pct()))
+
+    print('Demand Bounding Box {}'.format(cog.test_dmd_bbox()))
+    print('Supply Bounding Box {}'.format(cog.test_supply_bbox()))
 
     print('Bad: {}'.format(df_demand_bad.shape[0]))
     print(df_demand_bad['demand_pct'].sum())
