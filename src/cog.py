@@ -65,6 +65,9 @@ class CenterOfGravity:
         self.distance_units = distance_units
         self.distance_mode = distance_mode
 
+        # CoG variables
+        self.cog_initial = None
+
         # Convert coordinates if necessary:
 
         self.earth_radius = 0
@@ -129,12 +132,13 @@ class CenterOfGravity:
         elif units == 'm':
             self.earth_radius = 6372800
 
-    def init_cog(self, n=1, method='circles_1'):
+    def init_cog(self, n=1, method='dice_roll'):
         """
 
         Initializes CoG run with initial CoGs
 
         Methods include:
+        - dice_roll: Pick random spots, iterate unitl we have good initial spacing
         - circles_1: Pick a spot, draw an exclusivity circle, pick the next spot, repeat
 
         :param n: Number of centers of gravity
@@ -144,11 +148,49 @@ class CenterOfGravity:
 
         # For simplicity we don't worry about whether x, y coordinates are linear or angular for initialization
 
-        if method == 'circles_1':
-            for i in range(1,n+1):
-                print(i)
+        if method == 'dice_roll':
+            self.dice_roll(n)
 
-    def get_df_distances(self, df_o, df_d, mode='haversine'):
+    def dice_roll(self, n):
+        """
+
+        Quick and dirty initialization method
+
+        :param n: Number of centers
+        :return:
+        """
+
+        flag_success = False
+        cnt = 0
+
+        # Iterate until we have good spread
+        while not flag_success:
+            cnt += 1
+            min_dist_allowed = 1.0 / n
+            init_locs = pd.DataFrame({'x_norm': np.random.random(n), 'y_norm': np.random.random(n)})
+            init_distances = self.get_df_distances(init_locs, init_locs, mode='linear')
+            min_dist = init_distances.min()
+            if min_dist < min_dist_allowed:
+                flag_success = True
+
+        init_locs = self.scale_coords(init_locs, self.bbox_demand)
+
+        self.cog_initial = init_locs
+
+    def scale_coords(self, df, bbox):
+        """
+
+        :param df: DataFrame; must have columns named x_norm and y_norm
+        :param bbox: Dict of bounding box values
+        :return:
+        """
+
+        df[self.flds['x']] = bbox['min_x'] + bbox['diff_x'] * df['x_norm']
+        df[self.flds['y']] = bbox['min_y'] + bbox['diff_y'] * df['y_norm']
+
+        return df
+
+    def get_df_distances(self, df_o, df_d, flag_cartesian=True, mode='haversine'):
         """
 
         Compute distances between each combination in 2 sets of coordinates
@@ -157,16 +199,19 @@ class CenterOfGravity:
 
         :param df_o:
         :param df_d:
+        :param flag_cartesian: If True, do a Cartesian join, otherwise join dfs on their indices
         :param mode:
-        :param units: mi, km, or m
+
         :return:
         """
 
-        df_o['cartesianjoinkey'] = 0
-        df_d['cartesianjoinkey'] = 0
-
-        df_join = df_o.merge(df_d, on='cartesianjoinkey', how='outer', suffixes=['_o', '_d'])
-        # We keep the key column for speed; otherwise we could drop it for hygiene
+        if flag_cartesian:
+            df_o['cartesianjoinkey'] = 0
+            df_d['cartesianjoinkey'] = 0
+            df_join = df_o.merge(df_d, on='cartesianjoinkey', how='outer', suffixes=['_o', '_d'])
+            # We keep the key column for speed; otherwise we could drop it for hygiene
+        else:
+            df_join = df_o.merge(df_d, left_index=True, right_index=True, how='outer', suffixes=['_o', '_d'])
 
         col_x_o = self.flds['x'] + '_o'
         col_y_o = self.flds['y'] + '_o'
@@ -185,6 +230,18 @@ class CenterOfGravity:
                  * np.cos(df_join['lat_rad_d']) * np.power(np.sin(dlon/2.0)), 2)
             c = 2.0 * np.arcsin(np.sqrt(a))
             df_join['distance'] = self.earth_radius * c
+
+        return df_join
+
+    def solve(self, n=1):
+        """
+
+        :param n: Number of centers
+        :return:
+        """
+
+
+
 
     # TESTS
 
@@ -467,6 +524,8 @@ if __name__ == "__main__":
 
     cog = CenterOfGravity(dict_params, df_demand, None)
 
+    # Tests
+
     print('Valid demand rows: {}'.format(cog.test_dmd_rows()))
     print('Valid demand pct: {}'.format(cog.test_dmd_pct()))
 
@@ -475,4 +534,8 @@ if __name__ == "__main__":
 
     print('Bad: {}'.format(df_demand_bad.shape[0]))
     print(df_demand_bad['demand_pct'].sum())
+
+    # Solve CoG
+
+    cog.solve(n=1)
 
