@@ -4,6 +4,7 @@ import sys
 import yaml
 import pandas as pd
 import numpy as np
+import random
 
 import folium
 
@@ -45,6 +46,8 @@ class CenterOfGravity:
 
         """
 
+        self.flag_verbose = True
+
         self.cog_params = params
         self.df_cog_demand_data = df_demand_data
         self.df_cog_supply_data = df_supply_data
@@ -57,9 +60,9 @@ class CenterOfGravity:
         self.flds['y'] = y_fld
 
         self.bbox_demand = dict()
-        self.calc_bounding_box_demand()
+        self.set_bounding_box_demand()
         self.bbox_supply = dict()
-        self.calc_bounding_box_supply()
+        self.set_bounding_box_supply()
 
         self.units = units
         self.distance_units = distance_units
@@ -67,6 +70,7 @@ class CenterOfGravity:
 
         # CoG variables
         self.cog_initial = None
+        self.cog = None
 
         # Convert coordinates if necessary:
 
@@ -75,6 +79,9 @@ class CenterOfGravity:
             self.compute_radians_demand(units)
             self.compute_radians_supply(units)
             self.set_earth_radius(distance_units)
+
+        # This has to happen after we've set the earth radius
+        self.set_reference_distance(self.bbox_demand)
 
     def calc_bounding_box(self, df):
         # Convenience
@@ -92,16 +99,53 @@ class CenterOfGravity:
 
         return bbox
 
-    def calc_bounding_box_demand(self):
+    def set_bounding_box_demand(self):
         bbox = self.calc_bounding_box(self.df_cog_demand_data)
         self.bbox_demand = bbox
 
-    def calc_bounding_box_supply(self):
+    def set_bounding_box_supply(self):
         if self.cog_params['flag_supply']:
             bbox = self.calc_bounding_box(self.df_cog_supply_data)
             self.bbox_supply = bbox
         else:
             self.bbox_supply = None
+
+    def set_reference_distance(self, dict_bb):
+        """
+
+        :param dict_bb: Bounding box dictionary
+        :return: Average length of diagonals of bounding box
+        """
+        
+        df_bb = self.convert_bb_dict_to_df(dict_bb)
+                
+        df_dist_diag_1 = self.get_df_distances(df_bb.iloc[[0]], df_bb.iloc[[1]], mode=self.distance_mode)
+        df_dist_diag_2 = self.get_df_distances(df_bb.iloc[[2]], df_bb.iloc[[3]], mode=self.distance_mode)
+
+        # Should this be a geometric average? Maybe
+        self.distance_scale = (df_dist_diag_1['distance'][0] + df_dist_diag_2['distance'][0]) / 2.0
+
+    def convert_bb_dict_to_df(self, dict_bb):
+        """
+
+        :param dict_bb: Bounding box dictionary; assumes dict_bb has min_x, max_x, min_y, max_y
+        :return: DataFrame with 4 rows, one for each coordinate in the bounding box;
+                 order is min x/min y, max x/max y, min x/max y, max x/min x
+        """
+
+        x = self.flds['x']
+        y = self.flds['y']
+
+        # Order is: Min/Min, Max/Max,
+        list_bb = [{x: dict_bb['min_x'], y: dict_bb['min_y']},
+                   {x: dict_bb['max_x'], y: dict_bb['max_y']},
+                   {x: dict_bb['min_x'], y: dict_bb['max_y']},
+                   {x: dict_bb['min_x'], y: dict_bb['min_y']}]
+
+        df_bb = pd.DataFrame(list_bb)
+        df_bb = self.compute_radians(df_bb, self.units)
+        
+        return df_bb
 
     def compute_radians(self, df, units):
         if units == 'degrees':
@@ -132,13 +176,13 @@ class CenterOfGravity:
         elif units == 'm':
             self.earth_radius = 6372800
 
-    def init_cog(self, n=1, method='dice_roll'):
+    def init_cog(self, n=1, mode='grid', method='dice_roll'):
         """
 
         Initializes CoG run with initial CoGs
 
         Methods include:
-        - dice_roll: Pick random spots, iterate unitl we have good initial spacing
+        - dice_roll: Pick random spots from demand nodes, iterate until we have good initial spacing
         - circles_1: Pick a spot, draw an exclusivity circle, pick the next spot, repeat
 
         :param n: Number of centers of gravity
@@ -146,17 +190,26 @@ class CenterOfGravity:
         :return:
         """
 
-        # For simplicity we don't worry about whether x, y coordinates are linear or angular for initialization
-
         if method == 'dice_roll':
-            self.dice_roll(n)
+            self.dice_roll(n, mode=mode)
 
-    def dice_roll(self, n):
+        else:
+            # Default method
+            self.dice_roll(n, mode=mode)
+
+        pass
+
+    def dice_roll(self, n, mode='grid'):
         """
 
         Quick and dirty initialization method
 
+        If mode == 'free', we start with a [0, 1] range for both axes and scale up, and pick random locations
+        If mode == 'grid', we scale up the min distance by the object reference distance,
+            and pick random locations from the demand dataset
+
         :param n: Number of centers
+        :param mode: Method of finding CoGs
         :return:
         """
 
@@ -167,18 +220,39 @@ class CenterOfGravity:
         while not flag_success:
             cnt += 1
             min_dist_allowed = 1.0 / n
-            init_locs = pd.DataFrame({'x_norm': np.random.random(n), 'y_norm': np.random.random(n)})
-            init_distances = self.get_df_distances(init_locs, init_locs, mode='linear')
-            min_dist = init_distances.min()
+
+            if mode == 'free':
+                init_locs = pd.DataFrame({'x_norm': np.random.random(n), 'y_norm': np.random.random(n)})
+            elif mode == 'grid':
+                init_locs = self.df_cog_demand_data.sample(n)
+                min_dist_allowed = min_dist_allowed * self.distance_scale
+            else:
+                flag_success = None
+                init_locs = None
+
+            init_distances = self.get_df_distances(init_locs, init_locs, mode=self.distance_mode)
+            min_dist = init_distances['distance'].min()
+
             if min_dist < min_dist_allowed:
                 flag_success = True
 
-        init_locs = self.scale_coords(init_locs, self.bbox_demand)
+        if mode == 'free':
+            # Scale back up to the bounding box
+            init_locs = self.scale_coords(init_locs, self.bbox_demand)
+        elif mode == 'grid':
+            # Do nothing
+            pass
+        else:
+            init_locs = None
 
+        if self.flag_verbose:
+            print('Initialized CoG on attempt #{}'.format(cnt))
         self.cog_initial = init_locs
 
     def scale_coords(self, df, bbox):
         """
+
+        Performs a linear scaling of DataFrame coordinates to a bounding box
 
         :param df: DataFrame; must have columns named x_norm and y_norm
         :param bbox: Dict of bounding box values
@@ -196,6 +270,7 @@ class CenterOfGravity:
         Compute distances between each combination in 2 sets of coordinates
 
         Assumes each DataFrame has x, y coordinates as indicated by flds['x'] and flds['y']
+        If doing Haversine calculations, assumes each DataFrame has _rad_o and _rad_d fields
 
         :param df_o:
         :param df_d:
@@ -213,35 +288,47 @@ class CenterOfGravity:
         else:
             df_join = df_o.merge(df_d, left_index=True, right_index=True, how='outer', suffixes=['_o', '_d'])
 
-        col_x_o = self.flds['x'] + '_o'
-        col_y_o = self.flds['y'] + '_o'
-        col_x_d = self.flds['x'] + '_d'
-        col_y_d = self.flds['y'] + '_d'
-
         if mode == 'linear':
+            col_x_o = self.flds['x'] + '_o'
+            col_y_o = self.flds['y'] + '_o'
+            col_x_d = self.flds['x'] + '_d'
+            col_y_d = self.flds['y'] + '_d'
+
             # Unit-invariant
             df_join['distance'] = np.sqrt(np.power(df_join[col_x_o] - df_join[col_x_d], 2) +
                                           np.power(df_join[col_y_o] - df_join[col_y_d], 2))
 
         elif mode == 'haversine':
-            dlon = df_join['lon_rad_d'] - df_join['lon_rad_o']
-            dlat = df_join['lat_rad_d'] - df_join['lat_rad_o']
-            a = (np.power(np.sin(dlat/2.0), 2) + np.cos(df_join['lat_rad_o'])
-                 * np.cos(df_join['lat_rad_d']) * np.power(np.sin(dlon/2.0)), 2)
+            col_x_o = self.flds['x'] + '_rad_o'
+            col_y_o = self.flds['y'] + '_rad_o'
+            col_x_d = self.flds['x'] + '_rad_d'
+            col_y_d = self.flds['y'] + '_rad_d'
+
+            # Note to self: Lat is y, lng is x
+            dlon = df_join[col_x_d] - df_join[col_x_o]
+            dlat = df_join[col_y_d] - df_join[col_y_o]
+            a = (np.power(np.sin(dlat/2.0), 2) + np.cos(df_join[col_y_o])
+                 * np.cos(df_join[col_y_d]) * np.power(np.sin(dlon/2.0), 2))
             c = 2.0 * np.arcsin(np.sqrt(a))
             df_join['distance'] = self.earth_radius * c
 
         return df_join
 
-    def solve(self, n=1):
+    def solve(self, n=1, mode='grid'):
         """
 
         :param n: Number of centers
+        :param mode: 'free' or 'grid'. 'grid' uses existing nodes for CoG candidates; 'free' allows new nodes
         :return:
         """
 
+        # Set up initial centers
+        self.init_cog(n, mode=mode)
+        self.cog = self.cog_initial
 
+    def get_cogs(self):
 
+        return self.cog
 
     # TESTS
 
@@ -537,5 +624,8 @@ if __name__ == "__main__":
 
     # Solve CoG
 
-    cog.solve(n=1)
-
+    for n in range(1, 4):
+        cog.solve(n=n, mode='grid')
+        df_cogs = cog.get_cogs()
+        print('COG: {}'.format(n))
+        print(df_cogs)
